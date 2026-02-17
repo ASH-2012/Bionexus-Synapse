@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  # The Database
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: bionexus
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: synapse_db
+    ports:
+      - "5432:5432"
+
+  # The MQTT Broker (The "Ear" for the hardware)
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      
