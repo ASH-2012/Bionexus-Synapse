@@ -1,5 +1,6 @@
 # backend/main.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 import json
@@ -8,6 +9,13 @@ from datetime import datetime
 import aiomqtt  # pip install aiomqtt
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows connections from anywhere (like your frontend)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],
+)
 
 # --- 1. THE VAULT (Blockchain Logic) ---
 blockchain = []

@@ -17,20 +17,24 @@ export default function Home() {
   const workerRef = useRef<Worker | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // 1. Initialize System
+// 1. Initialize System
   useEffect(() => {
     // A. Start Web Worker (The "Compute" Layer)
-    // Note: In a real Next.js app, ensure worker.js is in /public
     workerRef.current = new Worker('/worker.js');
     workerRef.current.onmessage = (event) => {
+      // 1. Handle Compute Results (from Rust/JS)
+      if (event.data.type === 'UPDATE') {
+         // If you had a setParticles(event.data.particles) you'd use it here
+         // For now, we just count hashes to show "work" is happening
+         setHashes((prev) => prev + 1500); 
+      }
       if (event.data.type === 'PROGRESS') {
         setHashes((prev) => prev + 5000);
       }
     };
 
     // B. Connect to Python Backend (The "Network" Layer)
-    // Note: Make sure your FastAPI is running on port 8000!
-    wsRef.current = new WebSocket('ws://localhost:8000/ws');
+    wsRef.current = new WebSocket('ws://127.0.0.1:8000/ws');
     
     wsRef.current.onopen = () => {
       setIsConnected(true);
@@ -39,9 +43,21 @@ export default function Home() {
     
     wsRef.current.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.live_status) {
-           // Heartbeat from server
+        const message = JSON.parse(event.data);
+        
+        // --- THIS WAS MISSING ---
+        // 2. Handle Sensor Data (From Python/Ghost Hardware)
+        if (message.type === 'SENSOR_DATA') {
+            const { temp, ph, turbidity } = message.payload;
+            addLog(`[IOT] RX: Temp ${temp}°C | pH ${ph} | OD ${turbidity}`);
+            
+            // Optional: Spike the hash rate when data comes in to make it look active
+            setHashes((prev) => prev + 120); 
+        }
+        // ------------------------
+
+        if (message.live_status) {
+           // Heartbeat
         }
       } catch (e) {
         console.error("WS Parse Error", e);

@@ -1,28 +1,49 @@
 import time
 import random
-import requests # pip install requests
+import json
+import aiomqtt
+import asyncio
 
-# Config
-API_URL = "http://localhost:8000/ingest"
+# Configuration
+BROKER = "localhost"
+TOPIC = "bionexus/sensors/main"
 
-def simulate_bioreactor():
-    print("Starting BioNexus Dummy Device...")
-    while True:
-        # Fake Sensor Data
-        payload = {
-            "device_id": "REACTOR_01",
-            "temp": round(random.uniform(36.5, 37.5), 2),
-            "turbidity": round(random.uniform(0.1, 0.9), 2),
-            "ph": round(random.uniform(6.8, 7.2), 2)
-        }
+async def main():
+    print(f"👻 STARTING GHOST BIOREACTOR SIMULATOR...")
+    print(f"📡 Connecting to MQTT Broker at {BROKER}...")
+    
+    async with aiomqtt.Client(BROKER) as client:
+        print("✅ CONNECTED. Streaming fake sensor data...")
         
-        try:
-            response = requests.post(API_URL, json=payload)
-            print(f"Sent: {payload} | Response: {response.status_code}")
-        except Exception as e:
-            print(f"Connection Error: {e}")
+        while True:
+            # Simulate realistic biology data
+            # Temp fluctuates around 37.0
+            temp = round(37.0 + random.uniform(-0.5, 0.5), 2)
+            # pH fluctuates around 7.0
+            ph = round(7.0 + random.uniform(-0.2, 0.2), 2)
+            # Turbidity increases slowly (bacteria growing)
+            turbidity = round(0.1 + (time.time() % 100) / 100, 2)
             
-        time.sleep(2) # Send data every 2 seconds
+            payload = {
+                "device_id": "BIO_REACT_01",
+                "timestamp": time.time(),
+                "temp": temp,
+                "ph": ph,
+                "turbidity": turbidity,
+                "status": "ACTIVE"
+            }
+            
+            # Publish to the topic your backend is listening to
+            await client.publish(TOPIC, json.dumps(payload))
+            
+            print(f"📤 SENT: Temp={temp}°C | pH={ph} | Turbidity={turbidity}")
+            await asyncio.sleep(2) # Send every 2 seconds
 
 if __name__ == "__main__":
-    simulate_bioreactor()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Simulation Stopped.")
+    except Exception as e:
+        print(f"\n❌ CRITICAL ERROR: {e}")
+        print("Make sure Docker is running! (docker compose up -d)") 
