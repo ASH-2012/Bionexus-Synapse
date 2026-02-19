@@ -20,7 +20,7 @@ export default function Home() {
 // 1. Initialize System
   useEffect(() => {
     // A. Start Web Worker (The "Compute" Layer)
-    workerRef.current = new Worker('/worker.js');
+    workerRef.current = new Worker('/worker.js', { type: 'module'});
     workerRef.current.onmessage = (event) => {
       // 1. Handle Compute Results (from Rust/JS)
       if (event.data.type === 'UPDATE') {
@@ -61,6 +61,8 @@ export default function Home() {
         }
       } catch (e) {
         console.error("WS Parse Error", e);
+        console.error("WebSocket Message:", e);
+        addLog('[SYSTEM] Connection Error - Is Backend Running?');
       }
     };
 
