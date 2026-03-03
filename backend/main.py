@@ -1,43 +1,24 @@
 # backend/main.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import asyncio
 import json
-import hashlib
-from datetime import datetime
-import aiomqtt  # pip install aiomqtt
+import aiomqtt
+from blockchain import BioGridChain  # <-- THE VAULT IMPORT
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows connections from anywhere (like your frontend)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 1. THE VAULT (Blockchain Logic) ---
-blockchain = []
+# Instantiate the Master Ledger
+bionexus_chain = BioGridChain()
 
-def create_block(data):
-    previous_hash = blockchain[-1]['hash'] if blockchain else "0"
-    timestamp = datetime.now().isoformat()
-    # Create block content
-    block_content = json.dumps(data, sort_keys=True) + previous_hash + timestamp
-    block_hash = hashlib.sha256(block_content.encode()).hexdigest()
-    
-    block = {
-        "index": len(blockchain) + 1,
-        "timestamp": timestamp,
-        "data": data,
-        "previous_hash": previous_hash,
-        "hash": block_hash
-    }
-    blockchain.append(block)
-    return block
-
-# --- 2. CONNECTION MANAGER (For WebSockets) ---
+# --- CONNECTION MANAGER ---
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -47,10 +28,10 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
-        # Iterate over a copy to avoid modification errors during iteration
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(message)
@@ -59,63 +40,129 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# --- 3. MQTT LISTENER (The Bridge) ---
-async def mqtt_listener():
-    # Retry logic in case MQTT broker isn't ready immediately
+
+# --- GLOBAL STATE & PULSAR ---
+global_state = {
+    "total_hashes": 0 # Maintained for the UI vanity metric
+}
+
+async def network_state_broadcaster():
+    """Broadcasts network stats AND the current mining job."""
     while True:
         try:
-            print("[System] Connecting to MQTT Broker...")
+            if manager.active_connections:
+                # Ask the Vault if there is data waiting to be mined
+                mining_job = bionexus_chain.get_mining_job()
+                
+                payload = {
+                    "type": "NETWORK_STATE",
+                    "nodes": len(manager.active_connections),
+                    "total_hashes": global_state["total_hashes"],
+                    "chain_height": len(bionexus_chain.chain)
+                }
+                
+                # If there is a job, attach it to the broadcast
+                if mining_job:
+                    payload["mining_job"] = mining_job
+
+                await manager.broadcast(json.dumps(payload))
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+        
+        await asyncio.sleep(1)
+
+
+# --- MQTT LISTENER ---
+async def mqtt_listener():
+    while True:
+        try:
             async with aiomqtt.Client("localhost") as client:
                 await client.subscribe("bionexus/sensors/#")
-                print("[System] MQTT Connected & Listening")
                 async for message in client.messages:
                     payload = message.payload.decode()
-                    print(f"[MQTT] Received: {payload}")
-                    
                     data_dict = json.loads(payload)
                     
-                    # 1. Secure it on Blockchain
-                    create_block(data_dict)
+                    # Add to mempool instead of instantly minting a fake block
+                    bionexus_chain.add_pending_data(data_dict)
                     
-                    # 2. Forward to Frontend
                     await manager.broadcast(json.dumps({
                         "type": "SENSOR_DATA",
                         "payload": data_dict
                     }))
         except Exception as e:
-            print(f"[MQTT Error] {e}. Retrying in 5s...")
             await asyncio.sleep(5)
 
+
+# --- LIFECYCLE ROUTING ---
 @app.on_event("startup")
 async def startup_event():
-    # Start the background listener
     asyncio.create_task(mqtt_listener())
+    asyncio.create_task(network_state_broadcaster())
 
-# --- 4. API ENDPOINTS ---
+
+# --- API ENDPOINTS ---
 @app.get("/")
 def read_root():
     return {"status": "BioNexus Core Online"}
 
 @app.get("/chain")
 def get_chain():
-    return blockchain
+    return bionexus_chain.chain
 
-# Endpoint for Hardware-Sim (HTTP Fallback)
+@app.get("/mempool")
+def get_mempool():
+    return bionexus_chain.pending_data
+
 @app.post("/ingest")
 async def ingest_data(data: dict):
-    block = create_block(data)
-    # Also broadcast to frontend so it shows up on dashboard
-    await manager.broadcast(json.dumps({
-        "type": "SENSOR_DATA", 
-        "payload": data
-    }))
-    return {"status": "Data Secured", "block": block}
+    bionexus_chain.add_pending_data(data)
+    return {"status": "Data added to mempool for mining"}
 
+
+# --- WEBSOCKET ENDPOINT ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    
     try:
         while True:
-            await websocket.receive_text()
+            data = await websocket.receive_text()
+            
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            
+            # Action 1: Generic Compute Ticks (The biological physics sim)
+            if payload.get("action") == "COMPUTE_TICK":
+                raw_hashes = payload.get("hashes", 0)
+                try:
+                    hashes_to_add = int(raw_hashes)
+                    if 0 < hashes_to_add <= 50000000000:
+                        global_state["total_hashes"] += hashes_to_add
+                except (ValueError, TypeError):
+                    pass
+
+            # Action 2: Cryptographic Proof of Work Submitted
+            elif payload.get("action") == "SUBMIT_BLOCK":
+                block_index = payload.get("index")
+                nonce = payload.get("nonce")
+                submitted_hash = payload.get("hash")
+                
+                if block_index and nonce is not None and submitted_hash:
+                    # The Vault mathematically verifies the React node didn't cheat
+                    success = bionexus_chain.validate_and_add_block(block_index, nonce, submitted_hash)
+                    
+                    if success:
+                        print(f"[CHAIN] Block {block_index} successfully forged by grid!")
+                        await manager.broadcast(json.dumps({
+                            "type": "BLOCK_MINED",
+                            "block": bionexus_chain.chain[-1]
+                        }))
+                    else:
+                        print(f"[CHAIN] Node submitted invalid Proof of Work for block {block_index}.")
+                    
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(websocket)

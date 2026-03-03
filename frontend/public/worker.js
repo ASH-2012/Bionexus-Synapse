@@ -8,19 +8,26 @@ let jsParticles = [];
 const width = 800;
 const height = 600;
 
-// --- JS FALLBACK ENGINE (The "Slow" Mode) ---
-function initJS(count) {
-    jsParticles = [];
-    for(let i=0; i<count; i++) {
-        jsParticles.push({
-            x: Math.random() * width, y: Math.random() * height,
-            vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2
-        });
-    }
+// --- TELEMETRY & MINING STATE ---
+let hashAccumulator = 0;
+let lastReportTime = Date.now();
+
+let currentJob = null; // Stores { index, merkle_root, difficulty, previous_hash }
+let currentNonce = 0;
+let isMining = false;
+
+// --- CRYPTO UTILS (Double-SHA256) ---
+async function double_sha256(message) {
+  const msgUint8 = new TextEncoder().encode(message);
+  const hash1 = await crypto.subtle.digest('SHA-256', msgUint8);
+  const hash2 = await crypto.subtle.digest('SHA-256', hash1);
+  return Array.from(new Uint8Array(hash2))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
+// --- JS FALLBACK ENGINE ---
 function tickJS() {
-    // O(N^2) Gravity Logic in pure JS
     const len = jsParticles.length;
     for (let i=0; i<len; i++) {
         let p1 = jsParticles[i];
@@ -32,7 +39,7 @@ function tickJS() {
             let dy = p2.y - p1.y;
             let distSq = dx*dx + dy*dy;
             if (distSq > 25 && distSq < 10000) {
-                let f = 5.0 / distSq; // Gravity strength
+                let f = 2.0 / distSq; 
                 let dist = Math.sqrt(distSq);
                 fx += f * (dx/dist);
                 fy += f * (dy/dist);
@@ -40,62 +47,93 @@ function tickJS() {
         }
         p1.vx += fx; p1.vy += fy;
     }
-    // Update
     for (let p of jsParticles) {
         p.x += p.vx; p.y += p.vy;
         if (p.x < 0 || p.x > width) p.vx *= -1;
         if (p.y < 0 || p.y > height) p.vy *= -1;
     }
-    return jsParticles; // Returns array of objects
+    return jsParticles; 
 }
 
 // --- WORKER MESSAGE HANDLER ---
 self.onmessage = async function(e) {
+    
     if (e.data.type === "INIT") {
         try {
-            // 1. Initialize WASM
             const wasm = await init('/wasm/synapse_core_bg.wasm');
             memory = wasm.memory;
-            
-            // 2. Create Universe in Rust (500 particles)
-            universe = Universe.new(500, width, height);
+            universe = Universe.new(5000, width, height);
             useWasm = true;
-            console.log("🚀 [WORKER] Rust/WASM Engine Loaded & Active");
-            
-            // 3. Send "Ready" signal
             self.postMessage({ type: "READY", mode: "RUST" });
         } catch (err) {
-            console.error("❌ [WORKER] WASM Failed, using JS Fallback", err);
-            initJS(200); // Fewer particles for JS because it's slower
             useWasm = false;
             self.postMessage({ type: "READY", mode: "JS" });
         }
     }
 
+    // NEW: Receiving a mining job from the Python Ledger
+    if (e.data.type === "MINING_JOB") {
+        if(!currentJob || currentJob.index !== e.data.job.index) {
+        currentJob = e.data.job;
+        currentNonce = Math.floor(Math.random() * 1000000); // Random start to avoid collision with other nodes
+        isMining = true;
+        }
+    }
+
     if (e.data.type === "STEP") {
-        let particles = [];
+        let particles = null;
+        let operationsThisStep = 0;
         
         if (useWasm && universe) {
-            // --- RUST PATH (Fast) ---
             const particlesPtr = universe.tick();
-            // Read directly from WASM memory (Zero Copy)
-            const cells = new Float64Array(memory.buffer, particlesPtr, 500 * 4);
-            
-            // Convert to simple array for sending to Main Thread
-            // (In a real app, we'd transfer the buffer, but this is easier for now)
-            particles = new Float32Array(500 * 2); // x, y only for rendering
-            for (let i = 0; i < 500; i++) {
-                particles[i*2] = cells[i*4];     // x
-                particles[i*2+1] = cells[i*4+1]; // y
-            }
+            const wasmMemoryView = new Float32Array(memory.buffer, particlesPtr, 5000 * 2);
+            particles = wasmMemoryView.slice();
+            operationsThisStep = 5000 * 5000; 
         } else {
-            // --- JS PATH (Slow) ---
             const raw = tickJS();
             particles = new Float32Array(raw.length * 2);
             for (let i = 0; i < raw.length; i++) {
                 particles[i*2] = raw[i].x;
                 particles[i*2+1] = raw[i].y;
             }
+            operationsThisStep = raw.length * raw.length;
+        }
+
+        // --- THE MINING TASK (Interleaved) ---
+        if (isMining && currentJob) {
+            // Run exactly 100 hashing attempts per physics frame
+            // This prevents the UI from lagging while keeping the hashrate high
+            for (let i = 0; i < 100; i++) {
+                currentNonce++;
+                const header = `${currentJob.index}${currentJob.previous_hash}${currentJob.merkle_root}${currentNonce}`;
+                
+                // Note: crypto.subtle is async, but we wait for it to maintain order
+                const hash = await double_sha256(header);
+                
+                // Check if we solved the puzzle (e.g., hash starts with '0000')
+                if (hash.startsWith("0".repeat(currentJob.difficulty))) {
+                    self.postMessage({
+                        type: "BLOCK_SOLVED",
+                        solution: {
+                            index: currentJob.index,
+                            nonce: currentNonce,
+                            hash: hash
+                        }
+                    });
+                    isMining = false; // Stop mining until next job
+                    break;
+                }
+                operationsThisStep += 1; // Add hashes to the telemetry
+            }
+        }
+
+        // --- TELEMETRY ---
+        hashAccumulator += operationsThisStep;
+        const now = Date.now();
+        if (now - lastReportTime >= 1000) {
+            self.postMessage({ type: 'COMPUTE_TICK', hashes: hashAccumulator });
+            hashAccumulator = 0; 
+            lastReportTime = now;
         }
 
         self.postMessage({ type: "UPDATE", particles: particles }, [particles.buffer]);
