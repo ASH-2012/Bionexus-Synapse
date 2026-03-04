@@ -34,7 +34,7 @@ export default function Home() {
   useEffect(() => {
     const connectWebSocket = () => {
       // Inside your connectWebSocket function in page.tsx
-      const NGROK_URL = "https://nosographically-unnavigated-cleta.ngrok-free.dev/"; // Replace with your actual Ngrok URL
+      const NGROK_URL = "https://nosographically-unnavigated-cleta.ngrok-free.dev"; // Replace with your actual Ngrok URL
        wsRef.current = new WebSocket(`wss://${NGROK_URL}/ws`);
       
       wsRef.current.onopen = () => {
