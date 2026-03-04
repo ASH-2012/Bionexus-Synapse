@@ -37,7 +37,7 @@ async def main():
             await client.publish(TOPIC, json.dumps(payload))
             
             print(f"📤 SENT: Temp={temp}°C | pH={ph} | Turbidity={turbidity}")
-            await asyncio.sleep(2) # Send every 2 seconds
+            await asyncio.sleep(15) # Send every 15 seconds
 
 if __name__ == "__main__":
     try:

@@ -32,11 +32,17 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections[:]:
+        async def send_to_one(connection: WebSocket):
             try:
                 await connection.send_text(message)
             except Exception:
                 self.disconnect(connection)
+
+        # Fire all network requests concurrently. 
+        # return_exceptions=True prevents one failed send from crashing the gather pool.
+        tasks = [send_to_one(conn) for conn in self.active_connections[:]]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
 
@@ -150,8 +156,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 submitted_hash = payload.get("hash")
                 
                 if block_index and nonce is not None and submitted_hash:
-                    # The Vault mathematically verifies the React node didn't cheat
-                    success = bionexus_chain.validate_and_add_block(block_index, nonce, submitted_hash)
+                    # Offload the heavy cryptographic validation to a background thread
+                    success = await asyncio.to_thread(
+                        bionexus_chain.validate_and_add_block, 
+                        block_index, 
+                        nonce, 
+                        submitted_hash
+                    )
                     
                     if success:
                         print(f"[CHAIN] Block {block_index} successfully forged by grid!")
@@ -160,8 +171,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             "block": bionexus_chain.chain[-1]
                         }))
                     else:
-                        print(f"[CHAIN] Node submitted invalid Proof of Work for block {block_index}.")
-                    
+                        # Utilizing the websocket client property to log the specific node that failed
+                        client_ip = websocket.client.host if websocket.client else "Unknown"
+                        print(f"[CHAIN] REJECTED: Node {client_ip} submitted Proof of Work for a Ghost Root.")
     except WebSocketDisconnect:
         pass
     finally:

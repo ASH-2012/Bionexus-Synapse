@@ -73,7 +73,7 @@ self.onmessage = async function(e) {
 
     // NEW: Receiving a mining job from the Python Ledger
     if (e.data.type === "MINING_JOB") {
-        if(!currentJob || currentJob.index !== e.data.job.index) {
+        if(!currentJob || currentJob.merkle_root !== e.data.job.merkle_root) {
         currentJob = e.data.job;
         currentNonce = Math.floor(Math.random() * 1000000); // Random start to avoid collision with other nodes
         isMining = true;
