@@ -169,7 +169,7 @@ async def network_state_broadcaster():
 async def mqtt_listener():
     while True:
         try:
-            async with aiomqtt.Client("broker.emqx.io") as client:
+            async with aiomqtt.Client("broker.hivemq.com") as client:
                 await client.subscribe("synapse/ingest/#")
                 async for message in client.messages:
                     data_dict = json.loads(message.payload.decode())
