@@ -1,0 +1,7 @@
+fastapi==0.129.0
+uvicorn==0.40.0
+rdkit==2025.9.6
+redis==7.2.1
+aiomqtt==2.5.0
+pydantic==2.12.5
+websockets==16.0
