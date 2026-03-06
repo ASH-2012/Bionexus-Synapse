@@ -1,9 +1,17 @@
+import os
+import requests
 import hashlib
 import json
-import os
 from datetime import datetime
 import redis
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Add a safety check so the server doesn't crash if you forget the Railway variables
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("WARNING: Supabase credentials missing. Off-chain indexing disabled.")
+    
 # --- REDIS CLOUD CONNECTION ---
 # Railway automatically injects REDIS_URL into your environment.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -121,6 +129,27 @@ class BioGridChain:
             pipeline.delete("bionexus:mempool")
             pipeline.execute()
             
+            # --- OFF-CHAIN INDEXING (SUPABASE) ---
+            # Mirror the cryptographically secured block to the Postgres data lake
+            headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            try:
+                requests.post(
+                    f"{SUPABASE_URL}/rest/v1/blocks", 
+                    headers=headers, 
+                    json=new_block,
+                    timeout=3 # Don't let a slow DB crash the master node
+                )
+                print(f"Block {new_block['index']} archived to Supabase.")
+            except Exception as e:
+                print(f"Failed to mirror to Supabase: {e}")
+                # We do NOT return False here. The block is secured in Redis. 
+                # The indexer failing shouldn't invalidate the cryptographic consensus.
+
             return True
             
         return False
