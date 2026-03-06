@@ -261,10 +261,30 @@ export default function Home() {
               </div>
             </div>
 
-            <h3 className="text-sm font-bold text-gray-400 mb-2">DECODED BIOLOGICAL PAYLOAD</h3>
-            <div className="bg-black border border-green-800 p-4 rounded flex-1 overflow-y-auto font-mono text-xs text-green-300">
-              <pre>{JSON.stringify(selectedBlock.data, null, 2)}</pre>
+             {/* Find the Block Inspector Modal in page.tsx and update the Payload section */}
+
+            <h3 className="text-sm font-bold text-gray-400 mb-2">VERIFIED BIOLOGICAL HITS</h3>
+             <div className="bg-black border border-green-800 rounded-lg flex-1 overflow-y-auto">
+              {selectedBlock.merkle_root === "htvs_screening_batch" ? (
+               <div className="p-4 space-y-4">
+                {selectedBlock.data.map((hit: any, idx: number) => (
+                 <div key={idx} className="border-b border-purple-900/30 pb-3 last:border-0">
+                  <div className="flex justify-between text-xs mb-1">
+                   <span className="text-purple-400">CANDIDATE #{idx + 1}</span>
+                   <span className="text-white font-mono">ENERGY: {hit.score} kcal/mol</span>
+                  </div>
+                 <div className="bg-black/50 p-2 rounded font-mono text-[10px] text-gray-400 break-all border border-purple-900/20">
+               {hit.molecule}
+             </div>
+             </div>
+             ))}
             </div>
+         ) : (
+           <pre className="p-4 font-mono text-xs text-green-300">
+      {JSON.stringify(selectedBlock.data, null, 2)}
+    </pre>
+  )}
+</div>
           </div>
         </div>
       )}

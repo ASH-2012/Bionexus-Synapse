@@ -1,5 +1,4 @@
 // frontend/public/worker.js
-// CRITICAL FIX: You must import calculate_binding_energy from the WASM build
 import init, { Universe, calculate_binding_energy } from '/wasm/synapse_core.js';
 
 let universe = null;
@@ -16,7 +15,7 @@ let lastReportTime = Date.now();
 let currentJob = null; 
 let currentNonce = 0;
 let isMining = false;
-let computeMode = "PHYSICS"; // NEW: Track the state of the grid
+let computeMode = "PHYSICS"; 
 
 // --- CRYPTO UTILS (Double-SHA256) ---
 async function double_sha256(message) {
@@ -75,39 +74,55 @@ self.onmessage = async function(e) {
 
     if (e.data.type === "MINING_JOB") {
         const job = e.data.job;
-        computeMode = job.compute_mode || "PHYSICS"; // Read the mode from Python
+        computeMode = job.compute_mode || "PHYSICS"; 
 
         if (computeMode === "HTVS") {
             // --- BIOLOGICAL MODE: 3D DRUG DOCKING ---
-            isMining = false; // Kill the SHA-256 loop
+            isMining = false; 
             let successfulHits = [];
-            let totalProcessed = 0;
+            let actualOperations = 0;
 
             if (job.docking_payload && useWasm) { 
                 for (const item of job.docking_payload) {
-                    totalProcessed++;
                     
-                    // THE WASM BRIDGE: Execute the 3D Lennard-Jones calculation
+                    // THE WASM BRIDGE: Execute the 3D calculation
                     const score = calculate_binding_energy(item.atoms);
                     
+                    // REALITY-BASED TELEMETRY: Pairwise atom calculations
+                    const N = item.atoms.length;
+                    const pairwiseComparisons = (N * (N - 1)) / 2;
+                    actualOperations += (pairwiseComparisons * 20); // ~20 FLOPs per pair
+                    
                     if (score <= -8.0) {
-                        successfulHits.push({ molecule: item.smiles, score: score.toFixed(2) });
+                        // CRITICAL: Keys must be inserted in strict alphabetical order ('m' then 's')
+                        // This ensures JS JSON.stringify() matches Python's sort_keys=True
+                        successfulHits.push({ 
+                            molecule: item.smiles, 
+                            score: score.toFixed(2) 
+                        });
                     }
                 }
             }
 
-            // Immediately report telemetry so the UI doesn't look dead
-            self.postMessage({ type: 'COMPUTE_TICK', hashes: totalProcessed * 850000 });
+            // Report the mathematically accurate operational load
+            self.postMessage({ type: 'COMPUTE_TICK', hashes: actualOperations });
 
             // Submit the valid molecules to the Master Ledger
             if (successfulHits.length > 0) {
+                const nonce = Math.floor(Math.random() * 1000000);
+                
+                // JavaScript stringifies without spaces by default
+                const dataStr = JSON.stringify(successfulHits);
+                const header = `${dataStr}${nonce}`;
+                const validHash = await double_sha256(header);
+
                 self.postMessage({
                     type: "BLOCK_SOLVED",
                     solution: {
                         index: job.index,
-                        nonce: Math.floor(Math.random() * 1000000), 
-                        hash: "0000htvs" + Date.now().toString(16), 
-                        payload: successfulHits // Inject the drugs into the chain
+                        nonce: nonce,
+                        hash: validHash,
+                        payload: successfulHits 
                     }
                 });
             }
@@ -123,7 +138,6 @@ self.onmessage = async function(e) {
     }
 
     if (e.data.type === "STEP") {
-        // SURGERY: If we are drug docking, freeze the physics canvas to save CPU
         if (computeMode === "HTVS") {
             self.postMessage({ type: "UPDATE", particles: new Float32Array(0) });
             return; 

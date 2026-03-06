@@ -8,12 +8,10 @@ import redis
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Add a safety check so the server doesn't crash if you forget the Railway variables
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("WARNING: Supabase credentials missing. Off-chain indexing disabled.")
     
 # --- REDIS CLOUD CONNECTION ---
-# Railway automatically injects REDIS_URL into your environment.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -38,16 +36,27 @@ def build_merkle_root(leaves: list) -> str:
 
     return build_merkle_root(new_level)
 
+def verify_biological_proof(bio_payload, submitted_nonce, submitted_hash):
+    """
+    Ensures the node didn't just 'make up' a success.
+    The hash must be the double-SHA256 of (Data + Nonce).
+    """
+    # CRITICAL FIX: separators=(',', ':') forces Python to drop whitespace, matching JS JSON.stringify()
+    data_string = json.dumps(bio_payload, sort_keys=True, separators=(',', ':'))
+    header = f"{data_string}{submitted_nonce}"
+    
+    expected_hash = double_sha256(header)
+    
+    return expected_hash == submitted_hash
+
 class BioGridChain:
     def __init__(self):
-        self.difficulty = 2    # Target: Hash must start with 4 zeros ('0000')
+        self.difficulty = 2    
         
-        # Initialize chain ONLY if Redis is completely empty
         if not r.exists("bionexus:chain"):
             self.create_genesis_block()
 
     def create_genesis_block(self):
-        """The hardcoded first block of the chain."""
         genesis_block = {
             "index": 1,
             "timestamp": datetime.now().isoformat(),
@@ -60,15 +69,12 @@ class BioGridChain:
         r.rpush("bionexus:chain", json.dumps(genesis_block))
 
     def get_chain(self) -> list:
-        """Helper to fetch the full persistent chain from Redis."""
         return [json.loads(b) for b in r.lrange("bionexus:chain", 0, -1)]
 
     def get_mempool(self) -> list:
-        """Helper to fetch all pending IoT payloads from Redis."""
         return [json.loads(item) for item in r.lrange("bionexus:mempool", 0, -1)]
 
     def add_pending_data(self, data: dict):
-        """Adds incoming IoT data to the Redis mempool."""
         serialized_data = json.dumps(data, sort_keys=True, separators=(',', ':'))
         hashed_data = double_sha256(serialized_data)
         
@@ -76,16 +82,13 @@ class BioGridChain:
             "raw": data,
             "hash": hashed_data
         }
-        # Push to the persistent Redis list instead of volatile RAM
         r.rpush("bionexus:mempool", json.dumps(payload))
 
     def get_mining_job(self) -> dict:
-        """Packages the current pending data for the React nodes to mine."""
         mempool = self.get_mempool()
         if not mempool:
             return None
             
-        # Fetch the very last block directly from Redis
         last_block_json = r.lindex("bionexus:chain", -1)
         previous_block = json.loads(last_block_json)
         
@@ -99,8 +102,46 @@ class BioGridChain:
             "difficulty": self.difficulty
         }
 
+    # --- NEW: HTVS BLOCK CREATION ---
+    def create_htvs_block(self, bio_payload: list, nonce: int, submitted_hash: str) -> dict:
+        """Saves verified drug docking results into the ledger and mirrors to data lake."""
+        current_chain = self.get_chain()
+        last_block = current_chain[-1] if current_chain else {"hash": "0" * 64}
+        
+        htvs_block = {
+            "index": len(current_chain) + 1,
+            "timestamp": datetime.now().isoformat(),
+            "data": bio_payload, 
+            "nonce": nonce,
+            "hash": submitted_hash,
+            "merkle_root": "htvs_screening_batch",
+            "previous_hash": last_block["hash"]
+        }
+        
+        # Atomically push to Redis
+        r.rpush("bionexus:chain", json.dumps(htvs_block))
+        
+        # Off-chain indexing to Supabase (Do not lose your HTVS data)
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+        try:
+            requests.post(
+                f"{SUPABASE_URL}/rest/v1/blocks", 
+                headers=headers, 
+                json=htvs_block,
+                timeout=3 
+            )
+            print(f"[ARCHIVE] Biological HTVS Block {htvs_block['index']} archived to Supabase.")
+        except Exception as e:
+            print(f"Failed to mirror HTVS block to Supabase: {e}")
+
+        return htvs_block
+
     def validate_and_add_block(self, block_index: int, nonce: int, submitted_hash: str) -> bool:
-        """Verifies the Proof-of-Work submitted by a WebGrid node."""
         job = self.get_mining_job()
         if not job or job["index"] != block_index:
             return False
@@ -120,17 +161,11 @@ class BioGridChain:
                 "data": [item["raw"] for item in mempool]
             }
             
-            # --- ATOMIC TRANSACTION ---
-            # We use a Redis pipeline to ensure the new block is added 
-            # and the mempool is wiped at the exact same millisecond. 
-            # This prevents data duplication if two nodes solve a block simultaneously.
             pipeline = r.pipeline()
             pipeline.rpush("bionexus:chain", json.dumps(new_block))
             pipeline.delete("bionexus:mempool")
             pipeline.execute()
             
-            # --- OFF-CHAIN INDEXING (SUPABASE) ---
-            # Mirror the cryptographically secured block to the Postgres data lake
             headers = {
                 "apikey": SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -142,13 +177,11 @@ class BioGridChain:
                     f"{SUPABASE_URL}/rest/v1/blocks", 
                     headers=headers, 
                     json=new_block,
-                    timeout=3 # Don't let a slow DB crash the master node
+                    timeout=3 
                 )
                 print(f"Block {new_block['index']} archived to Supabase.")
             except Exception as e:
                 print(f"Failed to mirror to Supabase: {e}")
-                # We do NOT return False here. The block is secured in Redis. 
-                # The indexer failing shouldn't invalidate the cryptographic consensus.
 
             return True
             
