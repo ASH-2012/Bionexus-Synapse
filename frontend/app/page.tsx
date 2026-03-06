@@ -87,7 +87,7 @@ export default function Home() {
   const switchComputeMode = async (newMode: string) => {
     try {
       addLog(`SYSTEM: Instructing Master Node to switch to ${newMode} mode...`);
-      await fetch(`https://bionexus-synapse-production.up.railway.app/api/mod`, {
+      await fetch(`https://bionexus-synapse-production.up.railway.app/api/mode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: newMode }),
