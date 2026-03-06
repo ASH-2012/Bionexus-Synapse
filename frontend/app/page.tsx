@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Activity, Cpu, Network, Lock, Zap, Server, X, Database } from 'lucide-react';
+import { Activity, Cpu, Network, Lock, Zap, Server, X, Database, Code } from 'lucide-react';
 import SimulationCanvas from '../components/SimulationCanvas';
 
 export default function Home() {
@@ -14,17 +14,22 @@ export default function Home() {
   const [chainHeight, setChainHeight] = useState(0);
   const [currentMiningJob, setCurrentMiningJob] = useState<any>(null);
   
-  // --- NEW: EXPLORER STATE ---
+  // --- EXPLORER STATE ---
   const [blocks, setBlocks] = useState<any[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<any | null>(null);
+  const [viewRaw, setViewRaw] = useState(false); // NEW: Toggle state for Raw JSON
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const offlineBufferRef = useRef<number>(0); 
 
-  // Fetch the initial chain on load so a refresh doesn't wipe the visual ledger
+  // Reset the raw view toggle every time a new block is inspected
   useEffect(() => {
-    // Use HTTPS
+    setViewRaw(false);
+  }, [selectedBlock]);
+
+  // Fetch the initial chain on load
+  useEffect(() => {
     fetch(`https://bionexus-synapse-production.up.railway.app/chain`)
       .then(res => res.json())
       .then(data => setBlocks(data))
@@ -83,7 +88,6 @@ export default function Home() {
     };
   }, []);
 
-  // --- THE DUAL-DOMAIN ROUTER TRIGGER (MOVED TO CORRECT SCOPE) ---
   const switchComputeMode = async (newMode: string) => {
     try {
       addLog(`SYSTEM: Instructing Master Node to switch to ${newMode} mode...`);
@@ -117,7 +121,6 @@ export default function Home() {
       wsRef.current.send(JSON.stringify({ action: "SUBMIT_BLOCK", ...solution }));
     }
   };
-
 
   return (
     <main className="min-h-screen p-8 bg-black text-green-400 selection:bg-green-900 relative">
@@ -168,17 +171,17 @@ export default function Home() {
 
           <div className="flex gap-4 mt-4">
             <button
-             onClick={() => switchComputeMode("PHYSICS")}
-             className="w-full bg-blue-900/50 hover:bg-blue-800 text-blue-400 border border-blue-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
-          >
-            [ ENABLE N-BODY PHYSICS ]
-          </button>
-          <button
-            onClick={() => switchComputeMode("HTVS")}
-            className="w-full bg-purple-900/50 hover:bg-purple-800 text-purple-400 border border-purple-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
-          >
-             [ ENABLE HTVS DRUG DOCKING ]
-          </button>
+              onClick={() => switchComputeMode("PHYSICS")}
+              className="w-full bg-blue-900/50 hover:bg-blue-800 text-blue-400 border border-blue-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
+            >
+              [ ENABLE N-BODY PHYSICS ]
+            </button>
+            <button
+              onClick={() => switchComputeMode("HTVS")}
+              className="w-full bg-purple-900/50 hover:bg-purple-800 text-purple-400 border border-purple-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
+            >
+              [ ENABLE HTVS DRUG DOCKING ]
+            </button>
           </div>
 
           <div className="border border-green-800 bg-black rounded-lg h-[400px] relative overflow-hidden">
@@ -191,11 +194,11 @@ export default function Home() {
           </div>
         </div>
 
-        {/* --- NEW: THE VISUAL LEDGER --- */}
+        {/* --- THE VISUAL LEDGER --- */}
         <div className="border border-green-800 bg-green-900/5 p-6 rounded-lg flex flex-col h-[700px]">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Lock /> SYNAPSE VAULT</h2>
           
-          {/* Terminal Logs (Shrunk slightly) */}
+          {/* Terminal Logs */}
           <div className="h-48 overflow-y-auto font-mono text-xs space-y-2 mb-4 border-b border-green-900 pb-4">
             {logs.map((log, i) => (
               <div key={i} className="border-l-2 border-green-600 pl-2 py-1 bg-black/40">{log}</div>
@@ -229,7 +232,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* --- NEW: BLOCK INSPECTOR MODAL --- */}
+      {/* --- BLOCK INSPECTOR MODAL --- */}
       {selectedBlock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-[#0a0f0d] border border-blue-500 p-6 rounded-lg w-full max-w-3xl shadow-[0_0_30px_rgba(59,130,246,0.15)] max-h-[90vh] flex flex-col">
@@ -242,7 +245,7 @@ export default function Home() {
               </button>
             </div>
             
-            <div className="grid grid-cols-2 gap-4 mb-6 text-sm font-mono">
+            <div className="grid grid-cols-2 gap-4 mb-6 text-sm font-mono flex-shrink-0">
               <div className="bg-black p-3 rounded border border-green-900">
                 <span className="text-gray-500 block text-xs mb-1">TIMESTAMP</span>
                 <span className="text-white">{new Date(selectedBlock.timestamp).toLocaleString()}</span>
@@ -261,30 +264,63 @@ export default function Home() {
               </div>
             </div>
 
-             {/* Find the Block Inspector Modal in page.tsx and update the Payload section */}
-
-            <h3 className="text-sm font-bold text-gray-400 mb-2">VERIFIED BIOLOGICAL HITS</h3>
-             <div className="bg-black border border-green-800 rounded-lg flex-1 overflow-y-auto">
-              {selectedBlock.merkle_root === "htvs_screening_batch" ? (
-               <div className="p-4 space-y-4">
-                {selectedBlock.data.map((hit: any, idx: number) => (
-                 <div key={idx} className="border-b border-purple-900/30 pb-3 last:border-0">
-                  <div className="flex justify-between text-xs mb-1">
-                   <span className="text-purple-400">CANDIDATE #{idx + 1}</span>
-                   <span className="text-white font-mono">ENERGY: {hit.score} kcal/mol</span>
-                  </div>
-                 <div className="bg-black/50 p-2 rounded font-mono text-[10px] text-gray-400 break-all border border-purple-900/20">
-               {hit.molecule}
-             </div>
-             </div>
-             ))}
+            {/* HEADER WITH TOGGLE BUTTON */}
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-sm font-bold text-gray-400">
+                {selectedBlock.merkle_root === "htvs_screening_batch" ? "VERIFIED BIOLOGICAL HITS" : "SENSOR PAYLOAD"}
+              </h3>
+              {selectedBlock.merkle_root === "htvs_screening_batch" && (
+                <button 
+                  onClick={() => setViewRaw(!viewRaw)}
+                  className="flex items-center gap-1 text-[10px] font-mono bg-blue-900/30 hover:bg-blue-900/60 text-blue-400 px-2 py-1 rounded border border-blue-900/50 transition-colors"
+                >
+                  <Code className="w-3 h-3" />
+                  {viewRaw ? "[ SHOW UI FORMAT ]" : "[ SHOW RAW JSON ]"}
+                </button>
+              )}
             </div>
-         ) : (
-           <pre className="p-4 font-mono text-xs text-green-300">
-      {JSON.stringify(selectedBlock.data, null, 2)}
-    </pre>
-  )}
-</div>
+
+            <div className="bg-black border border-green-800 rounded-lg flex-1 overflow-y-auto">
+              {selectedBlock.merkle_root === "htvs_screening_batch" && !viewRaw ? (
+                // --- PRETTY UI VIEW ---
+                <div className="bg-black/50 p-4 rounded font-mono text-[10px] text-gray-400 border border-purple-900/20">
+                  {selectedBlock.data.map((hit: any, idx: number) => (
+                    <div key={idx} className="border-b border-purple-900/30 pb-4 mb-4 last:border-0 last:mb-0 last:pb-0">
+                      <div className="flex justify-between text-xs mb-3">
+                        <span className="text-purple-400 font-bold">CANDIDATE #{idx + 1}</span>
+                        <span className="text-white font-mono bg-purple-900/50 px-2 py-1 rounded">
+                          ENERGY: {hit.score} kcal/mol
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-6">
+                        <div className="bg-white/10 p-2 rounded flex-shrink-0">
+                          <img 
+                            src={`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(hit.molecule)}/image?width=150&height=150`}
+                            alt="Molecular Structure"
+                            className="w-24 h-24 object-contain invert" 
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150"><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="red">API ERROR</text></svg>';
+                            }}
+                          />
+                        </div>
+                        
+                        <div className="break-all text-[9px] text-gray-500 leading-relaxed">
+                          <span className="text-gray-400 block mb-1">SMILES SEQUENCE:</span>
+                          {hit.molecule}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // --- RAW JSON VIEW (Default for Physics, Toggle for HTVS) ---
+                <pre className="p-4 font-mono text-xs text-green-300 whitespace-pre-wrap break-all">
+                  {JSON.stringify(selectedBlock.data, null, 2)}
+                </pre>
+              )}
+            </div>
           </div>
         </div>
       )}
