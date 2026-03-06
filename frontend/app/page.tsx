@@ -24,8 +24,7 @@ export default function Home() {
 
   // Fetch the initial chain on load so a refresh doesn't wipe the visual ledger
   useEffect(() => {
-    const host = window.location.hostname;
-    fetch(`http://${host}:8000/chain`)
+    fetch(`http://127.0.0.1:8000/chain`)
       .then(res => res.json())
       .then(data => setBlocks(data))
       .catch(err => console.error("Failed to fetch chain", err));
@@ -33,9 +32,7 @@ export default function Home() {
 
   useEffect(() => {
     const connectWebSocket = () => {
-      // Inside your connectWebSocket function in page.tsx
-      const NGROK_URL = "https://nosographically-unnavigated-cleta.ngrok-free.dev"; // Replace with your actual Ngrok URL
-       wsRef.current = new WebSocket(`wss://${NGROK_URL}/ws`);
+      wsRef.current = new WebSocket(`ws://127.0.0.1:8000/ws`);
       
       wsRef.current.onopen = () => {
         setIsConnected(true);
@@ -62,7 +59,6 @@ export default function Home() {
               break;
             case 'BLOCK_MINED':
               addLog(`[GRID] Block ${message.block.index} forged! Hash: ${message.block.hash.substring(0, 8)}...`);
-              // NEW: Add the forged block to the visual ledger
               setBlocks(prev => [...prev, message.block]);
               break;
             case 'SENSOR_DATA':
@@ -86,6 +82,21 @@ export default function Home() {
     };
   }, []);
 
+  // --- THE DUAL-DOMAIN ROUTER TRIGGER (MOVED TO CORRECT SCOPE) ---
+  const switchComputeMode = async (newMode: string) => {
+    try {
+      addLog(`SYSTEM: Instructing Master Node to switch to ${newMode} mode...`);
+      await fetch(`http://127.0.0.1:8000/api/mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: newMode }),
+      });
+    } catch (error) {
+      console.error("Failed to switch mode", error);
+      addLog(`SYSTEM ERROR: Failed to contact Master Node.`);
+    }
+  };
+
   const addLog = (msg: string) => {
     setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 10)]);
   };
@@ -105,6 +116,7 @@ export default function Home() {
       wsRef.current.send(JSON.stringify({ action: "SUBMIT_BLOCK", ...solution }));
     }
   };
+
 
   return (
     <main className="min-h-screen p-8 bg-black text-green-400 selection:bg-green-900 relative">
@@ -151,6 +163,21 @@ export default function Home() {
             >
               {workerStatus === 'IDLE' ? <><Zap /> CONTRIBUTE CPU POWER</> : 'STOP COMPUTATION'}
             </button>
+          </div>
+
+          <div className="flex gap-4 mt-4">
+            <button
+             onClick={() => switchComputeMode("PHYSICS")}
+             className="w-full bg-blue-900/50 hover:bg-blue-800 text-blue-400 border border-blue-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
+          >
+            [ ENABLE N-BODY PHYSICS ]
+          </button>
+          <button
+            onClick={() => switchComputeMode("HTVS")}
+            className="w-full bg-purple-900/50 hover:bg-purple-800 text-purple-400 border border-purple-700/50 font-mono text-sm py-2 px-4 rounded transition-colors"
+          >
+             [ ENABLE HTVS DRUG DOCKING ]
+          </button>
           </div>
 
           <div className="border border-green-800 bg-black rounded-lg h-[400px] relative overflow-hidden">

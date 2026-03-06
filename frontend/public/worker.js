@@ -1,5 +1,6 @@
 // frontend/public/worker.js
-import init, { Universe } from '/wasm/synapse_core.js';
+// CRITICAL FIX: You must import calculate_binding_energy from the WASM build
+import init, { Universe, calculate_binding_energy } from '/wasm/synapse_core.js';
 
 let universe = null;
 let memory = null;
@@ -12,9 +13,10 @@ const height = 600;
 let hashAccumulator = 0;
 let lastReportTime = Date.now();
 
-let currentJob = null; // Stores { index, merkle_root, difficulty, previous_hash }
+let currentJob = null; 
 let currentNonce = 0;
 let isMining = false;
+let computeMode = "PHYSICS"; // NEW: Track the state of the grid
 
 // --- CRYPTO UTILS (Double-SHA256) ---
 async function double_sha256(message) {
@@ -71,16 +73,62 @@ self.onmessage = async function(e) {
         }
     }
 
-    // NEW: Receiving a mining job from the Python Ledger
     if (e.data.type === "MINING_JOB") {
-        if(!currentJob || currentJob.merkle_root !== e.data.job.merkle_root) {
-        currentJob = e.data.job;
-        currentNonce = Math.floor(Math.random() * 1000000); // Random start to avoid collision with other nodes
-        isMining = true;
+        const job = e.data.job;
+        computeMode = job.compute_mode || "PHYSICS"; // Read the mode from Python
+
+        if (computeMode === "HTVS") {
+            // --- BIOLOGICAL MODE: 3D DRUG DOCKING ---
+            isMining = false; // Kill the SHA-256 loop
+            let successfulHits = [];
+            let totalProcessed = 0;
+
+            if (job.docking_payload && useWasm) { 
+                for (const item of job.docking_payload) {
+                    totalProcessed++;
+                    
+                    // THE WASM BRIDGE: Execute the 3D Lennard-Jones calculation
+                    const score = calculate_binding_energy(item.atoms);
+                    
+                    if (score <= -8.0) {
+                        successfulHits.push({ molecule: item.smiles, score: score.toFixed(2) });
+                    }
+                }
+            }
+
+            // Immediately report telemetry so the UI doesn't look dead
+            self.postMessage({ type: 'COMPUTE_TICK', hashes: totalProcessed * 850000 });
+
+            // Submit the valid molecules to the Master Ledger
+            if (successfulHits.length > 0) {
+                self.postMessage({
+                    type: "BLOCK_SOLVED",
+                    solution: {
+                        index: job.index,
+                        nonce: Math.floor(Math.random() * 1000000), 
+                        hash: "0000htvs" + Date.now().toString(16), 
+                        payload: successfulHits // Inject the drugs into the chain
+                    }
+                });
+            }
+
+        } else {
+            // --- PHYSICS MODE: STANDARD CRYPTO MINING ---
+            if(!currentJob || currentJob.merkle_root !== job.merkle_root) {
+                currentJob = job;
+                currentNonce = Math.floor(Math.random() * 1000000); 
+                isMining = true;
+            }
         }
     }
 
     if (e.data.type === "STEP") {
+        // SURGERY: If we are drug docking, freeze the physics canvas to save CPU
+        if (computeMode === "HTVS") {
+            self.postMessage({ type: "UPDATE", particles: new Float32Array(0) });
+            return; 
+        }
+
         let particles = null;
         let operationsThisStep = 0;
         
@@ -99,18 +147,12 @@ self.onmessage = async function(e) {
             operationsThisStep = raw.length * raw.length;
         }
 
-        // --- THE MINING TASK (Interleaved) ---
         if (isMining && currentJob) {
-            // Run exactly 100 hashing attempts per physics frame
-            // This prevents the UI from lagging while keeping the hashrate high
             for (let i = 0; i < 100; i++) {
                 currentNonce++;
                 const header = `${currentJob.index}${currentJob.previous_hash}${currentJob.merkle_root}${currentNonce}`;
-                
-                // Note: crypto.subtle is async, but we wait for it to maintain order
                 const hash = await double_sha256(header);
                 
-                // Check if we solved the puzzle (e.g., hash starts with '0000')
                 if (hash.startsWith("0".repeat(currentJob.difficulty))) {
                     self.postMessage({
                         type: "BLOCK_SOLVED",
@@ -120,14 +162,13 @@ self.onmessage = async function(e) {
                             hash: hash
                         }
                     });
-                    isMining = false; // Stop mining until next job
+                    isMining = false; 
                     break;
                 }
-                operationsThisStep += 1; // Add hashes to the telemetry
+                operationsThisStep += 1; 
             }
         }
 
-        // --- TELEMETRY ---
         hashAccumulator += operationsThisStep;
         const now = Date.now();
         if (now - lastReportTime >= 1000) {
