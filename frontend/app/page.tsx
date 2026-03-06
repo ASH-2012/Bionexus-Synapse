@@ -24,7 +24,8 @@ export default function Home() {
 
   // Fetch the initial chain on load so a refresh doesn't wipe the visual ledger
   useEffect(() => {
-    fetch(`http://127.0.0.1:8000/chain`)
+    // Use HTTPS
+    fetch(`https://bionexus-synapse-production.up.railway.app/chain`)
       .then(res => res.json())
       .then(data => setBlocks(data))
       .catch(err => console.error("Failed to fetch chain", err));
@@ -32,7 +33,7 @@ export default function Home() {
 
   useEffect(() => {
     const connectWebSocket = () => {
-      wsRef.current = new WebSocket(`ws://127.0.0.1:8000/ws`);
+      wsRef.current = new WebSocket(`wss://bionexus-synapse-production.up.railway.app/ws`);
       
       wsRef.current.onopen = () => {
         setIsConnected(true);
