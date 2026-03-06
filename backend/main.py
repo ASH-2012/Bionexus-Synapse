@@ -2,9 +2,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
-import hashlib # ADDED: Required for verify_htvs_proof
 import aiomqtt
-from blockchain import BioGridChain, verify_biological_proof  # <-- THE VAULT IMPORT
+from blockchain import BioGridChain, verify_biological_proof
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -40,31 +39,27 @@ class ConnectionManager:
             except Exception:
                 self.disconnect(connection)
 
-        # Fire all network requests concurrently. 
-        # return_exceptions=True prevents one failed send from crashing the gather pool.
         tasks = [send_to_one(conn) for conn in self.active_connections[:]]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
 
-
 # --- GLOBAL STATE & REAL ONCOLOGY DATA ---
 REAL_SMILES_DB = [
-    "CN1CCN(CC1)C2=CC=CC=C2NC(=O)C3=CC=C(C=C3)C4=CN=CC=N4", # Imatinib (Leukemia)
-    "COCCOC1=C(C=C2C(=C1)N=CN=C2NC3=CC=CC(=C3)C#C)OCCOC", # Erlotinib (Lung Cancer)
-    "CC1=C(C(C(=O)C2=C1C(=O)C3=C(C2=O)C(CC(C3(C)O)(O)C(=O)CO)O)O)OC", # Doxorubicin (Breast Cancer)
-    "CC1=C(C=C(C=C1)NC(=O)C2=CCC(=CC2)C3=CC=CC=C3)C4=CN=CN4", # Nilotinib
-    "C1=CC=C(C=C1)C2=C(C(=O)C3=C(C2=O)C=CC(=C3)O)O", # Mitoxantrone
-    "CS(=O)(=O)CC1=CC2=C(C=C1)N=C(C3=CC=CC=C32)NC4=CC=C(C=C4)F", # Lapatinib
-    "CC1=C(C=C(C=C1)NC(=O)C2=CC=C(C=C2)CN3CCN(CC3)C)C4=CN=CC=C4", # Dasatinib
-    "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4", # Gefitinib
-    "C1=CC=C(C(=C1)C2=C(C(=O)C3=CC=CC=C3C2=O)O)O", # Anthracenedione core
-    "C1CC1C2=CC=C(C=C2)C3=NC4=C(N3)C=C(C=C4)C5=CC=CC=C5" # Generic Kinase Inhibitor Motif
+    "CN1CCN(CC1)C2=CC=CC=C2NC(=O)C3=CC=C(C=C3)C4=CN=CC=N4", 
+    "COCCOC1=C(C=C2C(=C1)N=CN=C2NC3=CC=CC(=C3)C#C)OCCOC", 
+    "CC1=C(C(C(=O)C2=C1C(=O)C3=C(C2=O)C(CC(C3(C)O)(O)C(=O)CO)O)O)OC", 
+    "CC1=C(C=C(C=C1)NC(=O)C2=CCC(=CC2)C3=CC=CC=C3)C4=CN=CN4", 
+    "C1=CC=C(C=C1)C2=C(C(=O)C3=C(C2=O)C=CC(=C3)O)O", 
+    "CS(=O)(=O)CC1=CC2=C(C=C1)N=C(C3=CC=CC=C32)NC4=CC=C(C=C4)F", 
+    "CC1=C(C=C(C=C1)NC(=O)C2=CC=C(C=C2)CN3CCN(CC3)C)C4=CN=CC=C4", 
+    "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4", 
+    "C1=CC=C(C(=C1)C2=C(C(=O)C3=CC=CC=C3C2=O)O)O", 
+    "C1CC1C2=CC=C(C=C2)C3=NC4=C(N3)C=C(C=C4)C5=CC=CC=C5" 
 ] * 100 
 
 def generate_3d_coordinates(smiles: str):
-    """Converts a 1D SMILES string into a 3D atomic coordinate matrix."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
@@ -87,7 +82,7 @@ def generate_3d_coordinates(smiles: str):
         })
     return atoms
 
-# --- NEW: PRE-CALCULATION OPTIMIZATION ---
+# --- PRE-CALCULATION OPTIMIZATION ---
 PRECOMPUTED_3D_DB = []
 
 async def precompute_drug_matrices():
@@ -144,7 +139,6 @@ async def network_state_broadcaster():
                     mining_job["compute_mode"] = global_state["compute_mode"]
                     
                     if global_state["compute_mode"] == "HTVS":
-                        # UPDATED: Pull from PRECOMPUTED_3D_DB instead of regenerating
                         start = global_state["htvs_cursor"]
                         end = start + 2 
                         
@@ -163,9 +157,7 @@ async def network_state_broadcaster():
         
         await asyncio.sleep(1)
 
-
 # --- MQTT LISTENER ---
-# UPDATED: Matches Wokwi code
 async def mqtt_listener():
     while True:
         try:
@@ -180,26 +172,12 @@ async def mqtt_listener():
         except Exception as e:
             await asyncio.sleep(5)
 
-
-# --- THE HTVS VALIDATOR HELPER ---
-def verify_htvs_proof(payload, nonce, submitted_hash):
-    # Ensure the hash is a double-SHA256 of the data + nonce
-    data_str = json.dumps(payload, sort_keys=True)
-    header = f"{data_str}{nonce}"
-    # This must match the JS logic in worker.js exactly
-    first = hashlib.sha256(header.encode()).digest()
-    expected = hashlib.sha256(first).hexdigest()
-    return expected == submitted_hash
-
-
 # --- LIFECYCLE ROUTING ---
 @app.on_event("startup")
 async def startup_event():
-    # Run pre-computation first
     asyncio.create_task(precompute_drug_matrices()) 
     asyncio.create_task(mqtt_listener())
     asyncio.create_task(network_state_broadcaster())
-
 
 # --- API ENDPOINTS ---
 @app.get("/")
@@ -208,17 +186,16 @@ def read_root():
 
 @app.get("/chain")
 def get_chain():
-    return bionexus_chain.get_chain() # Fetch from Redis
+    return bionexus_chain.get_chain() 
 
 @app.get("/mempool")
 def get_mempool():
-    return bionexus_chain.get_mempool() # Fetch from Redis
+    return bionexus_chain.get_mempool() 
 
 @app.post("/ingest")
 async def ingest_data(data: dict):
     bionexus_chain.add_pending_data(data)
     return {"status": "Data added to mempool for mining"}
-
 
 # --- WEBSOCKET ENDPOINT ---
 @app.websocket("/ws")
@@ -252,9 +229,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 bio_payload = payload.get("payload") 
 
                 if global_state["compute_mode"] == "HTVS" and bio_payload:
-                    # OFF-CHAIN VALIDATION: Ensure the node isn't lying
-                    # Note: Need to pass just the function to to_thread, then the args
-                    is_valid = await asyncio.to_thread(verify_htvs_proof, bio_payload, nonce, submitted_hash)
+                    # SECURE OFF-CHAIN VALIDATION 
+                    is_valid = await asyncio.to_thread(verify_biological_proof, bio_payload, nonce, submitted_hash)
                     
                     if is_valid:
                         new_block = bionexus_chain.create_htvs_block(bio_payload, nonce, submitted_hash)
@@ -272,7 +248,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     
                     if success:
-                        # YOU MUST DEFINE THE VARIABLE HERE FIRST
                         current_chain = bionexus_chain.get_chain()
                         await manager.broadcast(json.dumps({
                             "type": "BLOCK_MINED",
