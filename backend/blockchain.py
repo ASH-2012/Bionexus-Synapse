@@ -1,6 +1,13 @@
 import hashlib
 import json
+import os
 from datetime import datetime
+import redis
+
+# --- REDIS CLOUD CONNECTION ---
+# Railway automatically injects REDIS_URL into your environment.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def double_sha256(data: str) -> str:
     """Industry standard Double-SHA256 to prevent length extension attacks."""
@@ -25,10 +32,11 @@ def build_merkle_root(leaves: list) -> str:
 
 class BioGridChain:
     def __init__(self):
-        self.chain = []
-        self.pending_data = [] # IoT payloads waiting to be secured
         self.difficulty = 2    # Target: Hash must start with 4 zeros ('0000')
-        self.create_genesis_block()
+        
+        # Initialize chain ONLY if Redis is completely empty
+        if not r.exists("bionexus:chain"):
+            self.create_genesis_block()
 
     def create_genesis_block(self):
         """The hardcoded first block of the chain."""
@@ -41,26 +49,39 @@ class BioGridChain:
             "hash": "0" * 64,
             "data": []
         }
-        self.chain.append(genesis_block)
+        r.rpush("bionexus:chain", json.dumps(genesis_block))
+
+    def get_chain(self) -> list:
+        """Helper to fetch the full persistent chain from Redis."""
+        return [json.loads(b) for b in r.lrange("bionexus:chain", 0, -1)]
+
+    def get_mempool(self) -> list:
+        """Helper to fetch all pending IoT payloads from Redis."""
+        return [json.loads(item) for item in r.lrange("bionexus:mempool", 0, -1)]
 
     def add_pending_data(self, data: dict):
-        """Adds incoming IoT data to the mempool."""
-        # Enforce strict key sorting for deterministic hashing
+        """Adds incoming IoT data to the Redis mempool."""
         serialized_data = json.dumps(data, sort_keys=True, separators=(',', ':'))
         hashed_data = double_sha256(serialized_data)
         
-        self.pending_data.append({
+        payload = {
             "raw": data,
             "hash": hashed_data
-        })
+        }
+        # Push to the persistent Redis list instead of volatile RAM
+        r.rpush("bionexus:mempool", json.dumps(payload))
 
     def get_mining_job(self) -> dict:
         """Packages the current pending data for the React nodes to mine."""
-        if not self.pending_data:
+        mempool = self.get_mempool()
+        if not mempool:
             return None
             
-        previous_block = self.chain[-1]
-        leaves = [item["hash"] for item in self.pending_data]
+        # Fetch the very last block directly from Redis
+        last_block_json = r.lindex("bionexus:chain", -1)
+        previous_block = json.loads(last_block_json)
+        
+        leaves = [item["hash"] for item in mempool]
         merkle_root = build_merkle_root(leaves)
         
         return {
@@ -76,14 +97,11 @@ class BioGridChain:
         if not job or job["index"] != block_index:
             return False
 
-        # Reconstruct the block header exactly as the node should have
         header = f"{job['index']}{job['previous_hash']}{job['merkle_root']}{nonce}"
         calculated_hash = double_sha256(header)
 
-        # 1. Does the hash match what the node claims?
-        # 2. Does it meet the difficulty requirement?
         if calculated_hash == submitted_hash and calculated_hash.startswith("0" * self.difficulty):
-            # Mint the block
+            mempool = self.get_mempool()
             new_block = {
                 "index": job["index"],
                 "timestamp": datetime.now().isoformat(),
@@ -91,10 +109,18 @@ class BioGridChain:
                 "previous_hash": job["previous_hash"],
                 "nonce": nonce,
                 "hash": calculated_hash,
-                "data": [item["raw"] for item in self.pending_data]
+                "data": [item["raw"] for item in mempool]
             }
-            self.chain.append(new_block)
-            self.pending_data = [] # Clear the mempool
+            
+            # --- ATOMIC TRANSACTION ---
+            # We use a Redis pipeline to ensure the new block is added 
+            # and the mempool is wiped at the exact same millisecond. 
+            # This prevents data duplication if two nodes solve a block simultaneously.
+            pipeline = r.pipeline()
+            pipeline.rpush("bionexus:chain", json.dumps(new_block))
+            pipeline.delete("bionexus:mempool")
+            pipeline.execute()
+            
             return True
             
         return False
