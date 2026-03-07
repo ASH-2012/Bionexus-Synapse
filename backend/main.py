@@ -57,7 +57,7 @@ REAL_SMILES_DB = [
     "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4", 
     "C1=CC=C(C(=C1)C2=C(C(=O)C3=CC=CC=C3C2=O)O)O", 
     "C1CC1C2=CC=C(C=C2)C3=NC4=C(N3)C=C(C=C4)C5=CC=CC=C5" 
-] * 100 
+] * 10 
 
 def generate_3d_coordinates(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
