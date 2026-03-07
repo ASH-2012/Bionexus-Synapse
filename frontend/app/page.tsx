@@ -29,7 +29,7 @@ export default function Home() {
 
   // --- FIX 2: THE 502 HTML TRAP ---
   useEffect(() => {
-    fetch(`https://grid.nexus-synapse.com/chain`)
+    fetch(`https://bionexus-synapse-production.up.railway.app/chain`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const contentType = res.headers.get("content-type");
@@ -46,11 +46,11 @@ export default function Home() {
 
   useEffect(() => {
     const connectWebSocket = () => {
-      wsRef.current = new WebSocket(`wss://grid.nexus-synapse.com/ws`);
+      wsRef.current = new WebSocket(`wss://bionexus-synapse-production.up.railway.app/ws`);
       
       wsRef.current.onopen = () => {
         setIsConnected(true);
-        addLog('SYSTEM: Connected to BioNexus Core');
+        addLog('SYSTEM: Connected to Nexus Core');
         if (offlineBufferRef.current > 0) {
           wsRef.current?.send(JSON.stringify({
             action: "COMPUTE_TICK",
@@ -106,7 +106,7 @@ export default function Home() {
   const switchComputeMode = async (newMode: string) => {
     try {
       addLog(`SYSTEM: Instructing Master Node to switch to ${newMode} mode...`);
-      await fetch(`https://grid.nexus-synapse.com/api/mode`, {
+      await fetch(`https://bionexus-synapse-production.up.railway.app/api/mode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: newMode }),
@@ -142,9 +142,9 @@ export default function Home() {
       <header className="flex justify-between items-center border-b border-green-800 pb-4 mb-8">
         <div>
           <h1 className="text-4xl font-bold tracking-tighter flex items-center gap-3">
-            <Network className="w-10 h-10" /> BIONEXUS <span className="text-white">SYNAPSE</span>
+            <Network className="w-10 h-10" /> NEXUS <span className="text-white">SYNAPSE</span>
           </h1>
-          <p className="text-sm text-green-600 mt-1">DISTRIBUTED BIOLOGICAL COMPUTING GRID</p>
+          <p className="text-sm text-green-600 mt-1">DISTRIBUTED SCIENTIFIC COMPUTING GRID</p>
         </div>
         <div className="flex gap-4">
           <div className="text-right">
