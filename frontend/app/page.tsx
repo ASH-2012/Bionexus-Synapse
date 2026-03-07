@@ -17,23 +17,31 @@ export default function Home() {
   // --- EXPLORER STATE ---
   const [blocks, setBlocks] = useState<any[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<any | null>(null);
-  const [viewRaw, setViewRaw] = useState(false); // NEW: Toggle state for Raw JSON
+  const [viewRaw, setViewRaw] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const offlineBufferRef = useRef<number>(0); 
 
-  // Reset the raw view toggle every time a new block is inspected
   useEffect(() => {
     setViewRaw(false);
   }, [selectedBlock]);
 
-  // Fetch the initial chain on load
+  // --- FIX 2: THE 502 HTML TRAP ---
   useEffect(() => {
     fetch(`https://bionexus-synapse-production.up.railway.app/chain`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new TypeError("Received non-JSON response from server");
+        }
+        return res.json();
+      })
       .then(data => setBlocks(data))
-      .catch(err => console.error("Failed to fetch chain", err));
+      .catch(err => {
+        console.error("Failed to fetch chain. Backend may be sleeping:", err);
+      });
   }, []);
 
   useEffect(() => {
@@ -68,7 +76,7 @@ export default function Home() {
               setBlocks(prev => [...prev, message.block]);
               break;
             case 'SENSOR_DATA':
-              addLog(`[IOT] RX: Temp ${message.payload.temp}°C | pH ${message.payload.ph}`);
+              addLog(`[IOT] RX: Temp ${message.payload.temp}°C | Turbidity ${message.payload.turbidity}`);
               break;
           }
         } catch (e) { console.error("WS Parse Error", e); }
@@ -82,9 +90,16 @@ export default function Home() {
     };
 
     connectWebSocket();
+    
+    // --- FIX 3: THE RECONNECTION MEMORY LEAK ---
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      wsRef.current?.close();
+      if (wsRef.current) {
+        wsRef.current.onopen = null;
+        wsRef.current.onmessage = null;
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+      }
     };
   }, []);
 
@@ -198,14 +213,12 @@ export default function Home() {
         <div className="border border-green-800 bg-green-900/5 p-6 rounded-lg flex flex-col h-[700px]">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Lock /> SYNAPSE VAULT</h2>
           
-          {/* Terminal Logs */}
           <div className="h-48 overflow-y-auto font-mono text-xs space-y-2 mb-4 border-b border-green-900 pb-4">
             {logs.map((log, i) => (
               <div key={i} className="border-l-2 border-green-600 pl-2 py-1 bg-black/40">{log}</div>
             ))}
           </div>
 
-          {/* Block Explorer */}
           <h3 className="text-sm font-bold mb-2 flex items-center gap-2 text-blue-400"><Database className="w-4 h-4"/> VERIFIED LEDGER</h3>
           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
             {blocks.slice().reverse().map((block) => (
@@ -264,7 +277,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* HEADER WITH TOGGLE BUTTON */}
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-sm font-bold text-gray-400">
                 {selectedBlock.merkle_root === "htvs_screening_batch" ? "VERIFIED BIOLOGICAL HITS" : "SENSOR PAYLOAD"}
@@ -282,9 +294,9 @@ export default function Home() {
 
             <div className="bg-black border border-green-800 rounded-lg flex-1 overflow-y-auto">
               {selectedBlock.merkle_root === "htvs_screening_batch" && !viewRaw ? (
-                // --- PRETTY UI VIEW ---
                 <div className="bg-black/50 p-4 rounded font-mono text-[10px] text-gray-400 border border-purple-900/20">
-                  {selectedBlock.data.map((hit: any, idx: number) => (
+                  {/* --- FIX 1: THE ARRAY FALLBACK --- */}
+                  {(Array.isArray(selectedBlock.data) ? selectedBlock.data : []).map((hit: any, idx: number) => (
                     <div key={idx} className="border-b border-purple-900/30 pb-4 mb-4 last:border-0 last:mb-0 last:pb-0">
                       <div className="flex justify-between text-xs mb-3">
                         <span className="text-purple-400 font-bold">CANDIDATE #{idx + 1}</span>
@@ -315,7 +327,6 @@ export default function Home() {
                   ))}
                 </div>
               ) : (
-                // --- RAW JSON VIEW (Default for Physics, Toggle for HTVS) ---
                 <pre className="p-4 font-mono text-xs text-green-300 whitespace-pre-wrap break-all">
                   {JSON.stringify(selectedBlock.data, null, 2)}
                 </pre>
