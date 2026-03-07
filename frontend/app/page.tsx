@@ -29,7 +29,7 @@ export default function Home() {
 
   // --- FIX 2: THE 502 HTML TRAP ---
   useEffect(() => {
-    fetch(`https://bionexus-synapse-production.up.railway.app/chain`)
+    fetch(`https://grid.nexus-synapse.com/chain`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const contentType = res.headers.get("content-type");
@@ -46,7 +46,7 @@ export default function Home() {
 
   useEffect(() => {
     const connectWebSocket = () => {
-      wsRef.current = new WebSocket(`wss://bionexus-synapse-production.up.railway.app/ws`);
+      wsRef.current = new WebSocket(`wss://grid.nexus-synapse.com/ws`);
       
       wsRef.current.onopen = () => {
         setIsConnected(true);
@@ -106,7 +106,7 @@ export default function Home() {
   const switchComputeMode = async (newMode: string) => {
     try {
       addLog(`SYSTEM: Instructing Master Node to switch to ${newMode} mode...`);
-      await fetch(`https://bionexus-synapse-production.up.railway.app/api/mode`, {
+      await fetch(`https://grid.nexus-synapse.com/api/mode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: newMode }),
